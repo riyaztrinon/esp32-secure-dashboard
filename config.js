@@ -1,141 +1,175 @@
-// config.js - Secure Configuration Management
+// config.js - Admin-Only Firebase Configuration
 class ConfigManager {
     constructor() {
-        this.storageKey = 'smart_home_config_v1';
+        this.storageKey = 'smart_home_admin_config_v1';
         this.config = null;
         this.isConfigured = false;
+        this.isAdminConfigMode = false;
     }
 
     async initialize() {
         console.log('🔧 Initializing configuration manager');
         
-        // Try to load existing configuration
-        this.config = this.loadFromStorage();
+        // Try to load existing global configuration
+        this.config = this.loadGlobalConfig();
         
         if (this.config && this.validateConfig(this.config)) {
             this.isConfigured = true;
-            console.log('✅ Configuration loaded from storage');
+            console.log('✅ Global configuration loaded');
             return this.config;
         }
         
-        // Show configuration modal if no valid config
-        this.showConfigModal();
+        // Check if this is admin setup mode
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('admin_setup') === 'true') {
+            this.isAdminConfigMode = true;
+            this.showAdminConfigModal();
+        } else {
+            // Show message for regular users
+            this.showUserWaitingMessage();
+        }
+        
         return null;
     }
 
-    loadFromStorage() {
+    loadGlobalConfig() {
         try {
+            // Try to load from a global config file or URL parameter
             const stored = localStorage.getItem(this.storageKey);
             if (stored) {
                 return JSON.parse(stored);
             }
+            
+            // Check if config is embedded in URL (admin setup)
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.get('firebase_config')) {
+                const configData = JSON.parse(decodeURIComponent(urlParams.get('firebase_config')));
+                this.saveGlobalConfig(configData);
+                return configData;
+            }
         } catch (error) {
-            console.warn('Failed to load configuration from storage:', error);
+            console.warn('Failed to load global configuration:', error);
         }
         return null;
     }
 
-    validateConfig(config) {
-        if (!config) return false;
-        
-        const required = ['apiKey', 'authDomain', 'databaseURL', 'projectId'];
-        const isValid = required.every(key => config[key] && config[key].trim().length > 0);
-        
-        if (!isValid) return false;
-        
-        // Additional validation
-        if (!config.apiKey.startsWith('AIzaSy')) return false;
-        if (!config.authDomain.includes('.firebaseapp.com')) return false;
-        if (!config.databaseURL.includes('firebaseio.com')) return false;
-        
-        return true;
-    }
-
-    saveConfig(config) {
+    saveGlobalConfig(config) {
         try {
             const fullConfig = {
                 ...config,
                 storageBucket: `${config.projectId}.appspot.com`,
                 messagingSenderId: '123456789',
-                appId: '1:123456789:web:abcdef123456'
+                appId: '1:123456789:web:abcdef123456',
+                configuredAt: Date.now(),
+                configuredBy: 'admin'
             };
             
             localStorage.setItem(this.storageKey, JSON.stringify(fullConfig));
             this.config = fullConfig;
             this.isConfigured = true;
             
-            console.log('✅ Configuration saved successfully');
+            console.log('✅ Global configuration saved by admin');
             return fullConfig;
         } catch (error) {
-            console.error('Failed to save configuration:', error);
+            console.error('Failed to save global configuration:', error);
             throw error;
         }
     }
 
-    showConfigModal() {
+    showAdminConfigModal() {
         const modal = document.createElement('div');
         modal.innerHTML = `
             <div class="modal-overlay">
-                <div class="modal-content config-modal">
-                    <h2>🔧 Firebase Configuration</h2>
-                    <p>Please enter your Firebase project credentials:</p>
+                <div class="modal-content admin-config-modal">
+                    <h2>👑 Admin Firebase Setup</h2>
+                    <p><strong>One-time configuration for all users</strong></p>
+                    
+                    <div class="admin-warning">
+                        ⚠️ This configuration will be used by all users of the system.
+                        Only configure this if you are the system administrator.
+                    </div>
                     
                     <div class="config-form">
                         <div class="form-group">
                             <label>🔑 Firebase API Key:</label>
-                            <input type="text" id="configApiKey" placeholder="AIzaSy...">
-                            <small>Get from Firebase Console → Project Settings → Web API Key</small>
+                            <input type="text" id="adminApiKey" placeholder="AIzaSy...">
+                            <small>From Firebase Console → Project Settings → Web API Key</small>
                         </div>
                         
                         <div class="form-group">
                             <label>🏢 Auth Domain:</label>
-                            <input type="text" id="configAuthDomain" placeholder="your-project.firebaseapp.com">
-                            <small>Usually: your-project-id.firebaseapp.com</small>
+                            <input type="text" id="adminAuthDomain" placeholder="your-project.firebaseapp.com">
                         </div>
                         
                         <div class="form-group">
                             <label>🌐 Database URL:</label>
-                            <input type="url" id="configDatabaseURL" placeholder="https://your-project-default-rtdb.firebaseio.com">
-                            <small>Get from Realtime Database section</small>
+                            <input type="url" id="adminDatabaseURL" placeholder="https://your-project-default-rtdb.firebaseio.com">
                         </div>
                         
                         <div class="form-group">
                             <label>📋 Project ID:</label>
-                            <input type="text" id="configProjectId" placeholder="your-project-id">
-                            <small>Found in Project Settings → General</small>
+                            <input type="text" id="adminProjectId" placeholder="your-project-id">
                         </div>
                         
                         <div class="form-actions">
-                            <button onclick="this.saveConfiguration()" class="save-btn">💾 Save & Continue</button>
+                            <button onclick="this.saveAdminConfiguration()" class="admin-save-btn">
+                                👑 Save Global Configuration
+                            </button>
                         </div>
                     </div>
                     
-                    <div class="config-help">
-                        <details>
-                            <summary>❓ How to get Firebase credentials</summary>
-                            <ol>
-                                <li>Go to <a href="https://console.firebase.google.com" target="_blank">Firebase Console</a></li>
-                                <li>Select your project</li>
-                                <li>Click ⚙️ Settings → Project settings</li>
-                                <li>Scroll to "Your apps" → Web app → Config</li>
-                                <li>Copy the values to the form above</li>
-                            </ol>
-                        </details>
+                    <div class="admin-help">
+                        <h4>📋 Admin Setup Instructions:</h4>
+                        <ol>
+                            <li>Configure Firebase credentials above</li>
+                            <li>Create admin user in Firebase Authentication</li>
+                            <li>Add admin entry to Realtime Database</li>
+                            <li>Share regular dashboard URL with users</li>
+                        </ol>
                     </div>
                 </div>
             </div>
         `;
         
-        modal.querySelector('.save-btn').onclick = () => this.handleConfigSave(modal);
+        modal.querySelector('.admin-save-btn').onclick = () => this.handleAdminConfigSave(modal);
         document.body.appendChild(modal);
     }
 
-    handleConfigSave(modal) {
+    showUserWaitingMessage() {
+        const message = document.createElement('div');
+        message.innerHTML = `
+            <div class="modal-overlay">
+                <div class="modal-content user-waiting">
+                    <h2>🏠 Smart Home Dashboard</h2>
+                    <div class="waiting-content">
+                        <div class="loading-spinner"></div>
+                        <h3>⚙️ System Not Configured</h3>
+                        <p>The Firebase backend hasn't been configured yet.</p>
+                        <p>Please contact your system administrator to complete the initial setup.</p>
+                        
+                        <div class="admin-contact">
+                            <h4>For Administrators:</h4>
+                            <p>Add <code>?admin_setup=true</code> to the URL to configure Firebase credentials.</p>
+                            <p>Example: <code>https://yourusername.github.io/repo/?admin_setup=true</code></p>
+                        </div>
+                        
+                        <button onclick="window.location.reload()" class="retry-btn">
+                            🔄 Retry Connection
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(message);
+    }
+
+    handleAdminConfigSave(modal) {
         const config = {
-            apiKey: modal.querySelector('#configApiKey').value.trim(),
-            authDomain: modal.querySelector('#configAuthDomain').value.trim(),
-            databaseURL: modal.querySelector('#configDatabaseURL').value.trim(),
-            projectId: modal.querySelector('#configProjectId').value.trim()
+            apiKey: modal.querySelector('#adminApiKey').value.trim(),
+            authDomain: modal.querySelector('#adminAuthDomain').value.trim(),
+            databaseURL: modal.querySelector('#adminDatabaseURL').value.trim(),
+            projectId: modal.querySelector('#adminProjectId').value.trim()
         };
 
         if (!this.validateConfig(config)) {
@@ -144,66 +178,49 @@ class ConfigManager {
         }
 
         try {
-            const fullConfig = this.saveConfig(config);
+            const fullConfig = this.saveGlobalConfig(config);
             modal.remove();
             
-            // Reload page to reinitialize with new config
-            setTimeout(() => window.location.reload(), 500);
+            alert('✅ Global Firebase configuration saved! All users can now access the system.');
+            
+            // Redirect to regular dashboard
+            window.location.href = window.location.href.split('?')[0];
         } catch (error) {
             alert('❌ Failed to save configuration: ' + error.message);
         }
     }
 
-    showSettingsModal() {
-        const modal = document.createElement('div');
-        modal.innerHTML = `
-            <div class="modal-overlay">
-                <div class="modal-content">
-                    <h2>⚙️ Dashboard Settings</h2>
-                    <div class="settings-options">
-                        <button onclick="this.reconfigure()" class="settings-option">
-                            🔧 Reconfigure Firebase
-                        </button>
-                        <button onclick="this.clearAllData()" class="settings-option danger">
-                            🗑️ Clear All Data
-                        </button>
-                        <button onclick="this.exportConfig()" class="settings-option">
-                            📤 Export Configuration
-                        </button>
-                    </div>
-                    <button onclick="this.remove()" class="close-btn">❌ Close</button>
-                </div>
-            </div>
-        `;
+    validateConfig(config) {
+        if (!config) {
+            console.log('❌ Config validation failed: null config');
+            return false;
+        }
         
-        modal.querySelector('button[onclick="this.reconfigure()"]').onclick = () => {
-            if (confirm('Clear current configuration?')) {
-                localStorage.removeItem(this.storageKey);
-                window.location.reload();
-            }
-        };
+        const required = ['apiKey', 'authDomain', 'databaseURL', 'projectId'];
+        const missing = required.filter(key => !config[key] || config[key].trim().length === 0);
         
-        modal.querySelector('button[onclick="this.clearAllData()"]').onclick = () => {
-            if (confirm('⚠️ Clear ALL data including login sessions?')) {
-                localStorage.clear();
-                sessionStorage.clear();
-                window.location.reload();
-            }
-        };
-        
-        modal.querySelector('button[onclick="this.exportConfig()"]').onclick = () => {
-            const config = { ...this.config };
-            delete config.apiKey; // Don't export sensitive data
-            const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'smart-home-config.json';
-            a.click();
-            URL.revokeObjectURL(url);
-        };
-        
-        document.body.appendChild(modal);
+        if (missing.length > 0) {
+            console.log('❌ Config validation failed: missing fields:', missing);
+            return false;
+        }
+
+        if (!config.apiKey.startsWith('AIzaSy')) {
+            console.log('❌ Config validation failed: invalid API key format');
+            return false;
+        }
+
+        if (!config.authDomain.includes('.firebaseapp.com')) {
+            console.log('❌ Config validation failed: invalid auth domain format');
+            return false;
+        }
+
+        if (!config.databaseURL.includes('firebaseio.com')) {
+            console.log('❌ Config validation failed: invalid database URL format');
+            return false;
+        }
+
+        console.log('✅ Configuration validation passed');
+        return true;
     }
 }
 
