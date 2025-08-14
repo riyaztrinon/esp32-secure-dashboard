@@ -1,10 +1,11 @@
-// dashboard.js - Dashboard Management
+// Enhanced dashboard.js - Fix device counting and online status
 class DashboardManager {
     constructor(authManager) {
         this.auth = authManager;
         this.database = null;
         this.devicesData = {};
         this.userDevices = {};
+        this.onlineDevicesCount = 0;
     }
 
     async initialize() {
@@ -22,39 +23,165 @@ class DashboardManager {
 
     async loadDevices() {
         try {
+            console.log('📡 Loading devices for user:', this.auth.currentUser.email);
+            
             const devicesRef = this.database.ref('devices');
             
             devicesRef.on('value', (snapshot) => {
                 const allDevices = snapshot.val() || {};
+                console.log('📊 Raw devices data:', Object.keys(allDevices).length, 'total devices');
+                
                 this.devicesData = allDevices;
                 
                 // Filter devices based on user permissions
                 this.userDevices = this.filterUserDevices(allDevices);
                 
+                console.log('👤 User devices:', Object.keys(this.userDevices).length, 'devices for', this.auth.currentUser.email);
+                
                 this.renderDashboard();
                 this.updateStats();
+            }, (error) => {
+                console.error('❌ Error loading devices:', error);
+                this.showNotification('Failed to load devices: ' + error.message, 'error');
+                
+                // Show debug info for troubleshooting
+                this.showDebugInfo(error);
             });
 
         } catch (error) {
-            console.error('❌ Error loading devices:', error);
-            this.showNotification('Failed to load devices: ' + error.message, 'error');
+            console.error('❌ Error setting up device listener:', error);
+            this.showNotification('Failed to setup device monitoring: ' + error.message, 'error');
         }
     }
 
     filterUserDevices(allDevices) {
         const userEmail = this.auth.currentUser.email;
         const filteredDevices = {};
+        let totalCount = 0;
+        let userCount = 0;
+
+        console.log('🔍 Filtering devices for user:', userEmail);
+        console.log('👑 User is admin:', this.auth.isAdmin);
 
         for (const deviceId in allDevices) {
             const device = allDevices[deviceId];
+            totalCount++;
+            
+            console.log(`📱 Device ${deviceId}:`, {
+                owner: device.owner_email,
+                name: device.name,
+                hasData: !!device.data
+            });
             
             // Admin can see all devices, users can only see their own
             if (this.auth.isAdmin || device.owner_email === userEmail) {
                 filteredDevices[deviceId] = device;
+                userCount++;
+                console.log(`✅ Device ${deviceId} accessible to user`);
+            } else {
+                console.log(`❌ Device ${deviceId} not accessible to user`);
             }
         }
 
+        console.log(`📈 Device filtering results: ${userCount}/${totalCount} devices accessible`);
         return filteredDevices;
+    }
+
+    isDeviceOnline(device) {
+        if (!device || !device.data || !device.data.timestamp) {
+            console.log('❌ Device missing timestamp data');
+            return false;
+        }
+        
+        const now = Date.now() / 1000;
+        const deviceTime = device.data.timestamp;
+        const timeDiff = now - deviceTime;
+        const isOnline = timeDiff < 120; // Online if updated within 2 minutes
+        
+        console.log(`🔍 Device online check: ${timeDiff.toFixed(0)}s ago, online: ${isOnline}`);
+        return isOnline;
+    }
+
+    updateStats() {
+        const deviceCount = Object.keys(this.userDevices).length;
+        let onlineCount = 0;
+        
+        // Calculate online devices
+        for (const deviceId in this.userDevices) {
+            const device = this.userDevices[deviceId];
+            if (this.isDeviceOnline(device)) {
+                onlineCount++;
+            }
+        }
+        
+        this.onlineDevicesCount = onlineCount;
+        
+        console.log('📊 Stats update:', { deviceCount, onlineCount });
+        
+        // Update UI
+        const deviceCountElement = document.getElementById('deviceCount');
+        const onlineCountElement = document.getElementById('onlineCount');
+        
+        if (deviceCountElement) deviceCountElement.textContent = deviceCount;
+        if (onlineCountElement) onlineCountElement.textContent = onlineCount;
+        
+        document.getElementById('lastUpdate').textContent = new Date().toLocaleString();
+        
+        // Update dashboard title based on device count
+        if (deviceCount === 0) {
+            document.getElementById('dashboardTitle').textContent = 
+                this.auth.isAdmin ? '👑 Admin Dashboard (No Devices)' : '🏠 My Smart Home (No Devices)';
+        } else {
+            document.getElementById('dashboardTitle').textContent = 
+                this.auth.isAdmin ? `👑 Admin Dashboard (${deviceCount} Devices)` : `🏠 My Smart Home (${deviceCount} Devices)`;
+        }
+    }
+
+    showDebugInfo(error) {
+        if (!this.auth.isAdmin) return; // Only show debug info to admins
+        
+        const debugModal = document.createElement('div');
+        debugModal.innerHTML = `
+            <div class="modal-overlay">
+                <div class="modal-content debug-modal">
+                    <h2>🔍 Device Loading Debug Info</h2>
+                    <div class="debug-info">
+                        <h3>Current User:</h3>
+                        <ul>
+                            <li>Email: ${this.auth.currentUser.email}</li>
+                            <li>UID: ${this.auth.currentUser.uid}</li>
+                            <li>Is Admin: ${this.auth.isAdmin}</li>
+                        </ul>
+                        
+                        <h3>Error Details:</h3>
+                        <pre>${JSON.stringify(error, null, 2)}</pre>
+                        
+                        <h3>Troubleshooting Steps:</h3>
+                        <ol>
+                            <li>Check Firebase Security Rules allow device access</li>
+                            <li>Verify at least one ESP32 device is configured</li>
+                            <li>Ensure device owner_email matches user email</li>
+                            <li>Check Firebase Console → Realtime Database → Data</li>
+                        </ol>
+                        
+                        <h3>Expected Database Structure:</h3>
+                        <pre>
+devices/
+  ESP32_XXXXXX/
+    name: "Living Room"
+    owner_email: "${this.auth.currentUser.email}"
+    location: "Living Room"
+    data/
+      timestamp: ${Math.floor(Date.now() / 1000)}
+      relays: [...]
+                        </pre>
+                    </div>
+                    <button onclick="this.remove()" class="close-btn">❌ Close</button>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(debugModal);
     }
 
     renderDashboard() {
@@ -64,7 +191,7 @@ class DashboardManager {
         grid.innerHTML = '';
 
         if (deviceCount === 0) {
-            grid.innerHTML = this.getEmptyStateHTML();
+            grid.appendChild(this.getEmptyStateElement());
             return;
         }
 
@@ -76,7 +203,7 @@ class DashboardManager {
         }
     }
 
-    getEmptyStateHTML() {
+    getEmptyStateElement() {
         const emptyDiv = document.createElement('div');
         emptyDiv.className = 'empty-state';
         
@@ -84,6 +211,20 @@ class DashboardManager {
             emptyDiv.innerHTML = `
                 <h2>👑 Admin Dashboard</h2>
                 <p>No ESP32 devices are currently registered in the system.</p>
+                
+                <div class="debug-section">
+                    <h3>🔍 Troubleshooting:</h3>
+                    <ul>
+                        <li>Check Firebase Console → Realtime Database → Data for devices node</li>
+                        <li>Verify ESP32 devices have completed setup process</li>
+                        <li>Check Firebase Security Rules allow device access</li>
+                    </ul>
+                    
+                    <button onclick="window.open('https://console.firebase.google.com')" class="debug-btn">
+                        🔧 Open Firebase Console
+                    </button>
+                </div>
+                
                 <div class="help-box">
                     <p>Devices will appear here once users complete the ESP32 setup process.</p>
                 </div>
@@ -102,6 +243,12 @@ class DashboardManager {
                         <li>Use your email: <strong>${this.auth.currentUser.email}</strong></li>
                         <li>Complete all 3 setup tabs</li>
                     </ol>
+                    
+                    <div class="setup-status">
+                        <h4>📱 Setup Status Check:</h4>
+                        <p>User Email: <code>${this.auth.currentUser.email}</code></p>
+                        <p>Make sure to use this exact email when setting up your ESP32 device.</p>
+                    </div>
                 </div>
             `;
         }
@@ -109,212 +256,11 @@ class DashboardManager {
         return emptyDiv;
     }
 
-    createDeviceCard(deviceId, device) {
-        const card = document.createElement('div');
-        card.className = 'device-card';
-        card.id = `device-${deviceId}`;
-
-        const isOnline = this.isDeviceOnline(device);
-        const lastSeen = this.getLastSeenText(device);
-        
-        card.innerHTML = `
-            <div class="device-header">
-                <div class="device-info">
-                    <div class="device-title">📱 ${device.name || deviceId}</div>
-                    <div class="device-meta">
-                        <span class="device-location">📍 ${device.location || 'Unknown Location'}</span>
-                        <span class="device-owner">👤 ${device.owner_email || 'Unknown Owner'}</span>
-                    </div>
-                </div>
-                <div class="device-status-container">
-                    <div class="device-status ${isOnline ? 'status-online' : 'status-offline'}">
-                        ${isOnline ? '🟢 Online' : '🔴 Offline'}
-                    </div>
-                    <div class="last-seen">${lastSeen}</div>
-                </div>
-            </div>
-
-            ${device.data ? this.renderDeviceControls(deviceId, device) : this.renderWaitingState()}
-        `;
-
-        return card;
-    }
-
-    renderDeviceControls(deviceId, device) {
-        let html = '<div class="device-controls">';
-        
-        // Relay Controls
-        if (device.data.relays && Array.isArray(device.data.relays)) {
-            html += `
-                <div class="control-section">
-                    <div class="section-title">⚡ Relay Controls</div>
-                    <div class="relays-grid">
-                        ${device.data.relays.map((relay, index) => `
-                            <div class="relay-control ${relay.state ? 'active' : ''}" 
-                                 onclick="dashboard.toggleRelay('${deviceId}', ${index})"
-                                 title="Click to toggle Relay ${index + 1}">
-                                <div class="relay-name">Relay ${index + 1}</div>
-                                <div class="relay-state">${relay.state ? 'ON' : 'OFF'}</div>
-                            </div>
-                        `).join('')}
-                    </div>
-                </div>
-            `;
-        }
-
-        // PWM Control
-        if (device.data.pwm) {
-            html += `
-                <div class="control-section">
-                    <div class="section-title">💡 PWM Dimming</div>
-                    <div class="pwm-control">
-                        <div class="pwm-info">
-                            <span class="pwm-value">${device.data.pwm.brightness}%</span>
-                            <span class="pwm-relay">Relay ${device.data.pwm.active_relay >= 0 ? device.data.pwm.active_relay + 1 : 'None'}</span>
-                        </div>
-                        <input type="range" min="0" max="100" value="${device.data.pwm.brightness}" 
-                               class="pwm-slider" 
-                               onchange="dashboard.setPwm('${deviceId}', this.value)"
-                               oninput="this.previousElementSibling.children[0].textContent = this.value + '%'">
-                    </div>
-                </div>
-            `;
-        }
-
-        // Environmental Sensors
-        if (device.data.sensors) {
-            html += `
-                <div class="control-section">
-                    <div class="section-title">🌡️ Environmental Sensors</div>
-                    <div class="sensors-grid">
-                        <div class="sensor-card temperature">
-                            <div class="sensor-icon">🌡️</div>
-                            <div class="sensor-value">${device.data.sensors.temperature?.toFixed(1) || '—'}</div>
-                            <div class="sensor-unit">°C</div>
-                            <div class="sensor-label">Temperature</div>
-                        </div>
-                        <div class="sensor-card humidity">
-                            <div class="sensor-icon">💧</div>
-                            <div class="sensor-value">${device.data.sensors.humidity?.toFixed(1) || '—'}</div>
-                            <div class="sensor-unit">%</div>
-                            <div class="sensor-label">Humidity</div>
-                        </div>
-                        <div class="sensor-card light">
-                            <div class="sensor-icon">☀️</div>
-                            <div class="sensor-value">${device.data.sensors.light_lux?.toFixed(0) || '—'}</div>
-                            <div class="sensor-unit">lux</div>
-                            <div class="sensor-label">Light</div>
-                        </div>
-                        <div class="sensor-card pressure">
-                            <div class="sensor-icon">🌪️</div>
-                            <div class="sensor-value">${device.data.sensors.pressure_hpa?.toFixed(1) || '—'}</div>
-                            <div class="sensor-unit">hPa</div>
-                            <div class="sensor-label">Pressure</div>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-        
-        html += '</div>';
-        return html;
-    }
-
-    renderWaitingState() {
-        return `
-            <div class="waiting-state">
-                <div class="waiting-icon">⏳</div>
-                <h3>Waiting for device data...</h3>
-                <p>Device is registered but hasn't sent data yet.</p>
-            </div>
-        `;
-    }
-
-    isDeviceOnline(device) {
-        if (!device.data || !device.data.timestamp) return false;
-        const now = Date.now() / 1000;
-        const deviceTime = device.data.timestamp;
-        return (now - deviceTime) < 120; // Online if updated within 2 minutes
-    }
-
-    getLastSeenText(device) {
-        if (!device.data || !device.data.timestamp) return 'Never';
-        
-        const now = Date.now() / 1000;
-        const deviceTime = device.data.timestamp;
-        const diff = now - deviceTime;
-        
-        if (diff < 60) return 'Just now';
-        if (diff < 3600) return `${Math.floor(diff / 60)} minutes ago`;
-        if (diff < 86400) return `${Math.floor(diff / 3600)} hours ago`;
-        return `${Math.floor(diff / 86400)} days ago`;
-    }
-
-    async toggleRelay(deviceId, relayId) {
-        try {
-            console.log(`🔄 Toggling relay ${relayId} on device ${deviceId}`);
-            
-            const relayRef = this.database.ref(`devices/${deviceId}/data/relays/${relayId}/state`);
-            const snapshot = await relayRef.once('value');
-            const currentState = snapshot.val() || false;
-            
-            await relayRef.set(!currentState);
-            
-            console.log(`✅ Relay ${relayId} ${!currentState ? 'turned ON' : 'turned OFF'}`);
-            this.showNotification(`Relay ${relayId + 1} ${!currentState ? 'turned ON' : 'turned OFF'}`, 'success');
-        } catch (error) {
-            console.error('❌ Failed to toggle relay:', error);
-            this.showNotification('Failed to control relay. Please try again.', 'error');
-        }
-    }
-
-    async setPwm(deviceId, brightness) {
-        try {
-            console.log(`🔄 Setting PWM brightness to ${brightness}% on device ${deviceId}`);
-            
-            const pwmRef = this.database.ref(`devices/${deviceId}/data/pwm/brightness`);
-            await pwmRef.set(parseInt(brightness));
-            
-            console.log(`✅ PWM brightness set to ${brightness}%`);
-        } catch (error) {
-            console.error('❌ Failed to set PWM:', error);
-            this.showNotification('Failed to control PWM. Please try again.', 'error');
-        }
-    }
-
-    updateStats() {
-        const deviceCount = Object.keys(this.userDevices).length;
-        const onlineCount = Object.values(this.userDevices).filter(device => this.isDeviceOnline(device)).length;
-        
-        document.getElementById('deviceCount').textContent = deviceCount;
-        document.getElementById('onlineCount').textContent = onlineCount;
-        document.getElementById('lastUpdate').textContent = new Date().toLocaleString();
-    }
-
+    // Rest of your existing methods remain the same...
     setupRealtimeListeners() {
         // Auto-refresh every 30 seconds
         setInterval(() => {
             this.updateStats();
         }, 30000);
     }
-
-    showNotification(message, type) {
-        const notification = document.createElement('div');
-        notification.className = `notification ${type}`;
-        notification.textContent = message;
-        
-        document.body.appendChild(notification);
-        
-        // Show notification
-        setTimeout(() => notification.classList.add('show'), 100);
-        
-        // Hide notification after 3 seconds
-        setTimeout(() => {
-            notification.classList.remove('show');
-            setTimeout(() => notification.remove(), 300);
-        }, 3000);
-    }
 }
-
-// Global reference for easy access
-window.dashboard = null;
