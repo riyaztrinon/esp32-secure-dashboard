@@ -1,27 +1,28 @@
-// dashboard.js - Personal dashboard with device management
+// dashboard.js - Dashboard Management
 class DashboardManager {
     constructor(authManager) {
         this.auth = authManager;
-        this.db = null;
+        this.database = null;
         this.devicesData = {};
         this.userDevices = {};
     }
 
     async initialize() {
-        this.db = firebase.database();
-        await this.loadUserDevices();
-        this.setupRealtimeListeners();
-        console.log('✅ Dashboard initialized');
-    }
-
-    async loadUserDevices() {
-        if (!this.auth.getCurrentUser()) {
-            console.log('⚠️ No authenticated user');
+        if (!this.auth.currentUser) {
+            console.log('❌ No authenticated user');
             return;
         }
 
+        this.database = firebase.database();
+        console.log('✅ Dashboard manager initialized');
+        
+        await this.loadDevices();
+        this.setupRealtimeListeners();
+    }
+
+    async loadDevices() {
         try {
-            const devicesRef = this.db.ref('devices');
+            const devicesRef = this.database.ref('devices');
             
             devicesRef.on('value', (snapshot) => {
                 const allDevices = snapshot.val() || {};
@@ -31,16 +32,17 @@ class DashboardManager {
                 this.userDevices = this.filterUserDevices(allDevices);
                 
                 this.renderDashboard();
-                this.updateLastUpdateTime();
+                this.updateStats();
             });
 
         } catch (error) {
             console.error('❌ Error loading devices:', error);
+            this.showNotification('Failed to load devices: ' + error.message, 'error');
         }
     }
 
     filterUserDevices(allDevices) {
-        const userEmail = this.auth.getCurrentUser().email;
+        const userEmail = this.auth.currentUser.email;
         const filteredDevices = {};
 
         for (const deviceId in allDevices) {
@@ -58,11 +60,6 @@ class DashboardManager {
     renderDashboard() {
         const grid = document.getElementById('devicesGrid');
         const deviceCount = Object.keys(this.userDevices).length;
-        
-        // Update dashboard header
-        document.getElementById('deviceCount').textContent = deviceCount;
-        document.getElementById('dashboardTitle').textContent = 
-            this.auth.isAdmin ? 'Admin Dashboard - All Devices' : 'My Devices Dashboard';
 
         grid.innerHTML = '';
 
@@ -80,31 +77,36 @@ class DashboardManager {
     }
 
     getEmptyStateHTML() {
+        const emptyDiv = document.createElement('div');
+        emptyDiv.className = 'empty-state';
+        
         if (this.auth.isAdmin) {
-            return `
-                <div class="empty-state">
-                    <h2>👑 Admin Dashboard</h2>
-                    <p>No ESP32 devices are currently registered in the system.</p>
-                    <p>Devices will appear here once they complete the setup process.</p>
+            emptyDiv.innerHTML = `
+                <h2>👑 Admin Dashboard</h2>
+                <p>No ESP32 devices are currently registered in the system.</p>
+                <div class="help-box">
+                    <p>Devices will appear here once users complete the ESP32 setup process.</p>
                 </div>
             `;
         } else {
-            return `
-                <div class="empty-state">
-                    <h2>📱 Welcome to Your Smart Home Dashboard</h2>
-                    <p>You don't have any ESP32 devices registered yet.</p>
-                    <div class="setup-instructions">
-                        <h3>🔧 To add your first device:</h3>
-                        <ol>
-                            <li>Power on your ESP32 home automation device</li>
-                            <li>Connect to the WiFi network: <strong>ESP32_HomeAutomation_Setup</strong></li>
-                            <li>Open your browser and go to: <strong>http://192.168.4.1</strong></li>
-                            <li>Complete the setup with your email: <strong>${this.auth.getCurrentUser().email}</strong></li>
-                        </ol>
-                    </div>
+            emptyDiv.innerHTML = `
+                <h2>🏠 Welcome to Your Smart Home</h2>
+                <p>You don't have any ESP32 devices registered yet.</p>
+                <div class="help-box">
+                    <h3>🔧 To add your first device:</h3>
+                    <ol>
+                        <li>Power on your ESP32 home automation device</li>
+                        <li>Connect to WiFi: <strong>ESP32_HomeAutomation_Setup</strong></li>
+                        <li>Password: <strong>homesetup123</strong></li>
+                        <li>Open browser: <strong>http://192.168.4.1</strong></li>
+                        <li>Use your email: <strong>${this.auth.currentUser.email}</strong></li>
+                        <li>Complete all 3 setup tabs</li>
+                    </ol>
                 </div>
             `;
         }
+        
+        return emptyDiv;
     }
 
     createDeviceCard(deviceId, device) {
@@ -122,7 +124,6 @@ class DashboardManager {
                     <div class="device-meta">
                         <span class="device-location">📍 ${device.location || 'Unknown Location'}</span>
                         <span class="device-owner">👤 ${device.owner_email || 'Unknown Owner'}</span>
-                        <span class="device-id">🆔 ${deviceId}</span>
                     </div>
                 </div>
                 <div class="device-status-container">
@@ -140,75 +141,83 @@ class DashboardManager {
     }
 
     renderDeviceControls(deviceId, device) {
-        return `
-            <!-- Device Controls -->
-            <div class="device-controls">
-                <!-- Relay Controls -->
+        let html = '<div class="device-controls">';
+        
+        // Relay Controls
+        if (device.data.relays && Array.isArray(device.data.relays)) {
+            html += `
                 <div class="control-section">
                     <div class="section-title">⚡ Relay Controls</div>
                     <div class="relays-grid">
-                        ${device.data.relays ? device.data.relays.map(relay => `
+                        ${device.data.relays.map((relay, index) => `
                             <div class="relay-control ${relay.state ? 'active' : ''}" 
-                                 onclick="dashboardManager.toggleRelay('${deviceId}', ${relay.id})"
-                                 title="Click to toggle Relay ${relay.id + 1}">
-                                <div class="relay-name">Relay ${relay.id + 1}</div>
+                                 onclick="dashboard.toggleRelay('${deviceId}', ${index})"
+                                 title="Click to toggle Relay ${index + 1}">
+                                <div class="relay-name">Relay ${index + 1}</div>
                                 <div class="relay-state">${relay.state ? 'ON' : 'OFF'}</div>
                             </div>
-                        `).join('') : '<div class="no-data">No relay data available</div>'}
+                        `).join('')}
                     </div>
                 </div>
+            `;
+        }
 
-                <!-- PWM Control -->
-                ${device.data.pwm ? `
-                    <div class="control-section">
-                        <div class="section-title">💡 PWM Dimming</div>
-                        <div class="pwm-control">
-                            <div class="pwm-info">
-                                <span class="pwm-value">${device.data.pwm.brightness}%</span>
-                                <span class="pwm-relay">Relay ${device.data.pwm.active_relay >= 0 ? device.data.pwm.active_relay + 1 : 'None'}</span>
-                            </div>
-                            <input type="range" min="0" max="100" value="${device.data.pwm.brightness}" 
-                                   class="pwm-slider" 
-                                   onchange="dashboardManager.setPwm('${deviceId}', this.value)"
-                                   oninput="this.previousElementSibling.children[0].textContent = this.value + '%'">
+        // PWM Control
+        if (device.data.pwm) {
+            html += `
+                <div class="control-section">
+                    <div class="section-title">💡 PWM Dimming</div>
+                    <div class="pwm-control">
+                        <div class="pwm-info">
+                            <span class="pwm-value">${device.data.pwm.brightness}%</span>
+                            <span class="pwm-relay">Relay ${device.data.pwm.active_relay >= 0 ? device.data.pwm.active_relay + 1 : 'None'}</span>
+                        </div>
+                        <input type="range" min="0" max="100" value="${device.data.pwm.brightness}" 
+                               class="pwm-slider" 
+                               onchange="dashboard.setPwm('${deviceId}', this.value)"
+                               oninput="this.previousElementSibling.children[0].textContent = this.value + '%'">
+                    </div>
+                </div>
+            `;
+        }
+
+        // Environmental Sensors
+        if (device.data.sensors) {
+            html += `
+                <div class="control-section">
+                    <div class="section-title">🌡️ Environmental Sensors</div>
+                    <div class="sensors-grid">
+                        <div class="sensor-card temperature">
+                            <div class="sensor-icon">🌡️</div>
+                            <div class="sensor-value">${device.data.sensors.temperature?.toFixed(1) || '—'}</div>
+                            <div class="sensor-unit">°C</div>
+                            <div class="sensor-label">Temperature</div>
+                        </div>
+                        <div class="sensor-card humidity">
+                            <div class="sensor-icon">💧</div>
+                            <div class="sensor-value">${device.data.sensors.humidity?.toFixed(1) || '—'}</div>
+                            <div class="sensor-unit">%</div>
+                            <div class="sensor-label">Humidity</div>
+                        </div>
+                        <div class="sensor-card light">
+                            <div class="sensor-icon">☀️</div>
+                            <div class="sensor-value">${device.data.sensors.light_lux?.toFixed(0) || '—'}</div>
+                            <div class="sensor-unit">lux</div>
+                            <div class="sensor-label">Light</div>
+                        </div>
+                        <div class="sensor-card pressure">
+                            <div class="sensor-icon">🌪️</div>
+                            <div class="sensor-value">${device.data.sensors.pressure_hpa?.toFixed(1) || '—'}</div>
+                            <div class="sensor-unit">hPa</div>
+                            <div class="sensor-label">Pressure</div>
                         </div>
                     </div>
-                ` : ''}
-
-                <!-- Environmental Sensors -->
-                ${device.data.sensors ? `
-                    <div class="control-section">
-                        <div class="section-title">🌡️ Environmental Sensors</div>
-                        <div class="sensors-grid">
-                            <div class="sensor-card temperature">
-                                <div class="sensor-icon">🌡️</div>
-                                <div class="sensor-value">${device.data.sensors.temperature?.toFixed(1) || '—'}</div>
-                                <div class="sensor-unit">°C</div>
-                                <div class="sensor-label">Temperature</div>
-                            </div>
-                            <div class="sensor-card humidity">
-                                <div class="sensor-icon">💧</div>
-                                <div class="sensor-value">${device.data.sensors.humidity?.toFixed(1) || '—'}</div>
-                                <div class="sensor-unit">%</div>
-                                <div class="sensor-label">Humidity</div>
-                            </div>
-                            <div class="sensor-card light">
-                                <div class="sensor-icon">☀️</div>
-                                <div class="sensor-value">${device.data.sensors.light_lux?.toFixed(0) || '—'}</div>
-                                <div class="sensor-unit">lux</div>
-                                <div class="sensor-label">Light</div>
-                            </div>
-                            <div class="sensor-card pressure">
-                                <div class="sensor-icon">🌪️</div>
-                                <div class="sensor-value">${device.data.sensors.pressure_hpa?.toFixed(1) || '—'}</div>
-                                <div class="sensor-unit">hPa</div>
-                                <div class="sensor-label">Pressure</div>
-                            </div>
-                        </div>
-                    </div>
-                ` : ''}
-            </div>
-        `;
+                </div>
+            `;
+        }
+        
+        html += '</div>';
+        return html;
     }
 
     renderWaitingState() {
@@ -217,11 +226,6 @@ class DashboardManager {
                 <div class="waiting-icon">⏳</div>
                 <h3>Waiting for device data...</h3>
                 <p>Device is registered but hasn't sent data yet.</p>
-                <div class="waiting-steps">
-                    <div class="step">1. Ensure device is powered on</div>
-                    <div class="step">2. Check WiFi connection</div>
-                    <div class="step">3. Data should appear within 30 seconds</div>
-                </div>
             </div>
         `;
     }
@@ -246,13 +250,13 @@ class DashboardManager {
         return `${Math.floor(diff / 86400)} days ago`;
     }
 
-    // Device Control Methods
     async toggleRelay(deviceId, relayId) {
         try {
             console.log(`🔄 Toggling relay ${relayId} on device ${deviceId}`);
             
-            const relayRef = this.db.ref(`devices/${deviceId}/data/relays/${relayId}/state`);
-            const currentState = this.devicesData[deviceId]?.data?.relays?.[relayId]?.state || false;
+            const relayRef = this.database.ref(`devices/${deviceId}/data/relays/${relayId}/state`);
+            const snapshot = await relayRef.once('value');
+            const currentState = snapshot.val() || false;
             
             await relayRef.set(!currentState);
             
@@ -268,7 +272,7 @@ class DashboardManager {
         try {
             console.log(`🔄 Setting PWM brightness to ${brightness}% on device ${deviceId}`);
             
-            const pwmRef = this.db.ref(`devices/${deviceId}/data/pwm/brightness`);
+            const pwmRef = this.database.ref(`devices/${deviceId}/data/pwm/brightness`);
             await pwmRef.set(parseInt(brightness));
             
             console.log(`✅ PWM brightness set to ${brightness}%`);
@@ -278,17 +282,20 @@ class DashboardManager {
         }
     }
 
-    setupRealtimeListeners() {
-        // Listen for real-time updates
-        if (this.db) {
-            this.db.ref('devices').on('value', () => {
-                this.updateLastUpdateTime();
-            });
-        }
+    updateStats() {
+        const deviceCount = Object.keys(this.userDevices).length;
+        const onlineCount = Object.values(this.userDevices).filter(device => this.isDeviceOnline(device)).length;
+        
+        document.getElementById('deviceCount').textContent = deviceCount;
+        document.getElementById('onlineCount').textContent = onlineCount;
+        document.getElementById('lastUpdate').textContent = new Date().toLocaleString();
     }
 
-    updateLastUpdateTime() {
-        document.getElementById('lastUpdate').textContent = new Date().toLocaleString();
+    setupRealtimeListeners() {
+        // Auto-refresh every 30 seconds
+        setInterval(() => {
+            this.updateStats();
+        }, 30000);
     }
 
     showNotification(message, type) {
@@ -298,20 +305,16 @@ class DashboardManager {
         
         document.body.appendChild(notification);
         
-        setTimeout(() => {
-            notification.classList.add('show');
-        }, 100);
+        // Show notification
+        setTimeout(() => notification.classList.add('show'), 100);
         
+        // Hide notification after 3 seconds
         setTimeout(() => {
             notification.classList.remove('show');
-            setTimeout(() => {
-                if (notification.parentNode) {
-                    notification.parentNode.removeChild(notification);
-                }
-            }, 300);
+            setTimeout(() => notification.remove(), 300);
         }, 3000);
     }
 }
 
-// Initialize dashboard manager
-window.dashboardManager = null;
+// Global reference for easy access
+window.dashboard = null;
