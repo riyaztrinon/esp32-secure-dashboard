@@ -64,25 +64,37 @@
                             <span class="user-email" id="userEmail">user@example.com</span>
                             <span class="user-role" id="userRole">USER</span>
                         </div>
-                        <button class="logout-btn" onclick="authManager.signOut()">
-                            🚪 Sign Out
-                        </button>
+                        <div class="user-actions">
+                            <button class="settings-btn" onclick="showSettingsModal()" title="Settings">⚙️</button>
+                            <button class="logout-btn" onclick="authManager.signOut()">
+                                🚪 Sign Out
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
         </header>
 
-        <!-- Admin Panel -->
+        <!-- Enhanced Admin Panel -->
         <div id="adminPanel" class="admin-panel hidden">
             <div class="admin-header">
-                <h2 class="admin-title">👑 Admin Panel</h2>
-                <p class="admin-subtitle">Manage users and system access</p>
+                <h2 class="admin-title">👑 Admin Control Panel</h2>
+                <p class="admin-subtitle">Manage users, monitor system, and control access</p>
             </div>
             
             <div class="admin-content">
-                <div class="add-user-section">
+                <!-- System Statistics -->
+                <div class="admin-section">
+                    <h3>📊 System Overview</h3>
+                    <div id="systemStatsContainer">
+                        <!-- Stats will be populated by admin.js -->
+                    </div>
+                </div>
+                
+                <!-- Add New User -->
+                <div class="admin-section">
                     <h3>➕ Add New User</h3>
-                    <form id="addUserForm" class="add-user-form">
+                    <form id="addUserForm" onsubmit="handleAddUserSubmit(event)" class="add-user-form">
                         <div class="form-row">
                             <div class="form-group">
                                 <label for="newUserEmail">📧 Email Address:</label>
@@ -91,14 +103,14 @@
                             
                             <div class="form-group">
                                 <label for="newUserPassword">🔐 Password:</label>
-                                <input type="password" id="newUserPassword" placeholder="Secure password" required>
+                                <input type="password" id="newUserPassword" placeholder="Minimum 6 characters" required>
                             </div>
                             
                             <div class="form-group">
                                 <label for="newUserRole">👤 Role:</label>
                                 <select id="newUserRole" required>
                                     <option value="user">User</option>
-                                    <option value="admin">Admin</option>
+                                    <option value="admin">Administrator</option>
                                 </select>
                             </div>
                             
@@ -107,6 +119,20 @@
                             </button>
                         </div>
                     </form>
+                </div>
+                
+                <!-- User Management -->
+                <div class="admin-section">
+                    <div class="section-header">
+                        <h3>👥 User Management</h3>
+                        <div class="section-actions">
+                            <button onclick="exportUsers()" class="export-btn">📤 Export Users</button>
+                            <button onclick="exportStats()" class="export-btn">📊 Export Stats</button>
+                        </div>
+                    </div>
+                    <div id="adminUserTable">
+                        <!-- User table will be populated by admin.js -->
+                    </div>
                 </div>
             </div>
         </div>
@@ -199,15 +225,6 @@
                     await this.handleLogin();
                 });
 
-                // Admin user creation
-                const addUserForm = document.getElementById('addUserForm');
-                if (addUserForm) {
-                    addUserForm.addEventListener('submit', async (e) => {
-                        e.preventDefault();
-                        await this.handleAddUser();
-                    });
-                }
-
                 // Auth state changes
                 if (window.authManager.auth) {
                     window.authManager.auth.onAuthStateChanged(async (user) => {
@@ -234,25 +251,6 @@
                 }
             }
 
-            async handleAddUser() {
-                const email = document.getElementById('newUserEmail').value;
-                const password = document.getElementById('newUserPassword').value;
-                const role = document.getElementById('newUserRole').value;
-                
-                try {
-                    const result = await window.authManager.createUser(email, password, role);
-                    if (result.success) {
-                        // Clear form
-                        document.getElementById('addUserForm').reset();
-                        this.showNotification(`✅ User ${email} created successfully!`, 'success');
-                    } else {
-                        this.showNotification(`❌ Failed to create user: ${result.error}`, 'error');
-                    }
-                } catch (error) {
-                    this.showNotification(`❌ Failed to create user: ${error.message}`, 'error');
-                }
-            }
-
             showError(message) {
                 const errorDiv = document.getElementById('errorMessage');
                 if (message) {
@@ -272,11 +270,143 @@
 
         // Global helper functions
         function showHelp() {
-            alert('🆘 Help: Contact your system administrator for assistance.');
+            const helpModal = document.createElement('div');
+            helpModal.innerHTML = `
+                <div class="config-modal-overlay">
+                    <div class="config-modal-content">
+                        <h2>❓ Help & Support</h2>
+                        <div class="help-sections">
+                            <h3>🏠 ESP32 Device Setup</h3>
+                            <ol>
+                                <li>Power on your ESP32 device</li>
+                                <li>Connect to WiFi: <strong>ESP32_HomeAutomation_Setup</strong></li>
+                                <li>Open browser: <strong>http://192.168.4.1</strong></li>
+                                <li>Complete setup with your dashboard email</li>
+                            </ol>
+                            
+                            <h3>🎛️ Dashboard Controls</h3>
+                            <ul>
+                                <li><strong>Click relays</strong> to toggle ON/OFF</li>
+                                <li><strong>Use PWM slider</strong> for dimming control</li>
+                                <li><strong>Hold switch on device</strong> for PWM mode</li>
+                                <li><strong>Monitor sensors</strong> in real-time</li>
+                            </ul>
+                            
+                            <h3>👑 Admin Features (Admins only)</h3>
+                            <ul>
+                                <li>Add new users to the system</li>
+                                <li>View all devices regardless of owner</li>
+                                <li>Export user and system data</li>
+                                <li>Monitor system statistics</li>
+                            </ul>
+                            
+                            <h3>🔒 Security & Privacy</h3>
+                            <ul>
+                                <li>All data is encrypted in transit</li>
+                                <li>Users can only see their own devices</li>
+                                <li>Firebase credentials stored locally only</li>
+                                <li>Admin access required for user management</li>
+                            </ul>
+                        </div>
+                        <button onclick="this.parentElement.parentElement.remove()" class="close-btn">✖️ Close</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(helpModal);
         }
 
-        function showSettings() {
-            alert('⚙️ Settings: Advanced settings coming soon!');
+        function showSettingsModal() {
+            const modal = document.createElement('div');
+            modal.innerHTML = `
+                <div class="config-modal-overlay">
+                    <div class="config-modal-content">
+                        <h2>⚙️ Dashboard Settings</h2>
+                        <div class="settings-options">
+                            <button onclick="reconfigureFirebase()" class="settings-option">
+                                🔧 Reconfigure Firebase
+                            </button>
+                            <button onclick="clearAllData()" class="settings-option danger">
+                                🗑️ Clear All Settings
+                            </button>
+                            <button onclick="exportSettings()" class="settings-option">
+                                📤 Export Settings
+                            </button>
+                            <button onclick="showDeviceInfo()" class="settings-option">
+                                📋 Device Information
+                            </button>
+                        </div>
+                        <button onclick="this.parentElement.parentElement.remove()" class="close-btn">❌ Close</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        function reconfigureFirebase() {
+            if (confirm('This will clear your current Firebase configuration. Continue?')) {
+                window.appConfig.clearConfiguration();
+                window.location.reload();
+            }
+        }
+
+        function clearAllData() {
+            if (confirm('⚠️ This will clear ALL stored data including login sessions. Continue?')) {
+                localStorage.clear();
+                sessionStorage.clear();
+                window.location.reload();
+            }
+        }
+
+        function exportSettings() {
+            const settings = {
+                user: window.authManager?.getCurrentUser()?.email || 'unknown',
+                role: window.authManager?.getRole() || 'user',
+                deviceCount: Object.keys(window.dashboardManager?.userDevices || {}).length,
+                exportTime: new Date().toISOString()
+            };
+            
+            const json = JSON.stringify(settings, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'dashboard-settings.json';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        }
+
+        function showDeviceInfo() {
+            const info = `
+                Dashboard Version: 2.0.0
+                Firebase SDK: 9.22.0
+                Browser: ${navigator.userAgent}
+                Screen: ${screen.width}x${screen.height}
+                Connection: ${navigator.onLine ? 'Online' : 'Offline'}
+                Platform: ${navigator.platform}
+            `;
+            alert(info);
+        }
+
+        // Admin functions (called from admin.js)
+        async function handleAddUserSubmit(event) {
+            event.preventDefault();
+            if (window.adminManager) {
+                await window.adminManager.handleAddUser();
+            }
+        }
+
+        function exportUsers() {
+            if (window.adminManager) {
+                window.adminManager.exportUsersData();
+            }
+        }
+
+        function exportStats() {
+            if (window.adminManager) {
+                window.adminManager.exportSystemStats();
+            }
         }
 
         // Initialize application
@@ -291,11 +421,24 @@
 
         // Auto-retry initialization if configuration becomes available
         const configCheckInterval = setInterval(() => {
-            if (!app.initialized && window.appConfig.isConfigured()) {
+            if (!app.initialized && window.appConfig?.isConfigured()) {
                 clearInterval(configCheckInterval);
                 app.initialize();
             }
         }, 1000);
+
+        // Service worker registration for PWA capabilities (optional)
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then((registration) => {
+                        console.log('SW registered: ', registration);
+                    })
+                    .catch((registrationError) => {
+                        console.log('SW registration failed: ', registrationError);
+                    });
+            });
+        }
 
         console.log('🔐 ESP32 Home Automation - Secure Dashboard Loaded');
     </script>
