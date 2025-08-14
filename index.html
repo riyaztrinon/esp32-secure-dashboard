@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🏠 ESP32 Home Automation - Secure Dashboard</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏠</text></svg>">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Configuration Modal (shown when needed) -->
+    <div id="configModal" class="modal hidden">
+        <!-- Configuration form will be injected here -->
+    </div>
+
+    <!-- Login Screen -->
+    <div id="loginContainer" class="login-container">
+        <div class="login-card">
+            <div class="login-header">
+                <h1 class="login-title">🏠 Home Automation</h1>
+                <p class="login-subtitle">Secure Access Dashboard</p>
+            </div>
+            
+            <div id="errorMessage" class="error-message hidden"></div>
+            
+            <form id="loginForm" class="login-form">
+                <div class="form-group">
+                    <label for="email">📧 Email Address:</label>
+                    <input type="email" id="email" required placeholder="your@example.com">
+                </div>
+                
+                <div class="form-group">
+                    <label for="password">🔐 Password:</label>
+                    <input type="password" id="password" required placeholder="Enter your password">
+                </div>
+                
+                <button type="submit" class="login-btn">
+                    <span class="btn-text">🔐 Sign In Securely</span>
+                </button>
+            </form>
+            
+            <div class="login-footer">
+                <p class="security-note">🔒 All communications are encrypted and secure</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Dashboard -->
+    <div id="dashboardContainer" class="dashboard-container hidden">
+        <!-- Header -->
+        <header class="dashboard-header">
+            <div class="header-content">
+                <div class="header-left">
+                    <h1 id="dashboardTitle">🏠 My Devices Dashboard</h1>
+                    <div class="dashboard-stats">
+                        <span class="stat">📱 <span id="deviceCount">0</span> Devices</span>
+                        <span class="stat">👤 Personal Dashboard</span>
+                    </div>
+                </div>
+                
+                <div class="header-right">
+                    <div class="user-info">
+                        <div class="user-details">
+                            <span class="user-email" id="userEmail">user@example.com</span>
+                            <span class="user-role" id="userRole">USER</span>
+                        </div>
+                        <button class="logout-btn" onclick="authManager.signOut()">
+                            🚪 Sign Out
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Admin Panel -->
+        <div id="adminPanel" class="admin-panel hidden">
+            <div class="admin-header">
+                <h2 class="admin-title">👑 Admin Panel</h2>
+                <p class="admin-subtitle">Manage users and system access</p>
+            </div>
+            
+            <div class="admin-content">
+                <div class="add-user-section">
+                    <h3>➕ Add New User</h3>
+                    <form id="addUserForm" class="add-user-form">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="newUserEmail">📧 Email Address:</label>
+                                <input type="email" id="newUserEmail" placeholder="user@example.com" required>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="newUserPassword">🔐 Password:</label>
+                                <input type="password" id="newUserPassword" placeholder="Secure password" required>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="newUserRole">👤 Role:</label>
+                                <select id="newUserRole" required>
+                                    <option value="user">User</option>
+                                    <option value="admin">Admin</option>
+                                </select>
+                            </div>
+                            
+                            <button type="submit" class="add-user-btn">
+                                ➕ Add User
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Devices Grid -->
+        <main class="dashboard-main">
+            <div id="devicesGrid" class="devices-grid">
+                <!-- Devices will be populated here -->
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="dashboard-footer">
+            <div class="footer-content">
+                <div class="footer-info">
+                    <span>Last updated: <span id="lastUpdate">-</span></span>
+                    <span>🔒 Secure Connection</span>
+                </div>
+                <div class="footer-links">
+                    <a href="#" onclick="showHelp()">❓ Help</a>
+                    <a href="#" onclick="showSettings()">⚙️ Settings</a>
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Loading Screen -->
+    <div id="loadingContainer" class="loading-container hidden">
+        <div class="loading-content">
+            <div class="loading-spinner"></div>
+            <h2>🔄 Loading your dashboard...</h2>
+            <p>Establishing secure connection...</p>
+        </div>
+    </div>
+
+    <!-- Notification Container -->
+    <div id="notificationContainer" class="notification-container"></div>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+
+    <!-- Application Scripts -->
+    <script src="config.js"></script>
+    <script src="auth.js"></script>
+    <script src="dashboard.js"></script>
+    <script src="admin.js"></script>
+
+    <!-- Main Application -->
+    <script>
+        // Main application initialization
+        class HomeAutomationApp {
+            constructor() {
+                this.initialized = false;
+            }
+
+            async initialize() {
+                try {
+                    console.log('🚀 Initializing ESP32 Home Automation Dashboard');
+                    
+                    // Wait for configuration
+                    if (!window.appConfig.isConfigured()) {
+                        console.log('⚙️ Waiting for configuration...');
+                        return; // Configuration modal will handle this
+                    }
+
+                    // Initialize authentication
+                    await window.authManager.initialize();
+                    
+                    // Initialize dashboard manager
+                    window.dashboardManager = new DashboardManager(window.authManager);
+                    
+                    // Set up event listeners
+                    this.setupEventListeners();
+                    
+                    this.initialized = true;
+                    console.log('✅ Application initialized successfully');
+                    
+                } catch (error) {
+                    console.error('❌ Application initialization failed:', error);
+                    this.showError('Failed to initialize application: ' + error.message);
+                }
+            }
+
+            setupEventListeners() {
+                // Login form
+                document.getElementById('loginForm').addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    await this.handleLogin();
+                });
+
+                // Admin user creation
+                const addUserForm = document.getElementById('addUserForm');
+                if (addUserForm) {
+                    addUserForm.addEventListener('submit', async (e) => {
+                        e.preventDefault();
+                        await this.handleAddUser();
+                    });
+                }
+
+                // Auth state changes
+                if (window.authManager.auth) {
+                    window.authManager.auth.onAuthStateChanged(async (user) => {
+                        if (user && window.dashboardManager) {
+                            await window.dashboardManager.initialize();
+                        }
+                    });
+                }
+            }
+
+            async handleLogin() {
+                const email = document.getElementById('email').value;
+                const password = document.getElementById('password').value;
+                
+                this.showError(''); // Clear previous errors
+                
+                try {
+                    const result = await window.authManager.signIn(email, password);
+                    if (!result.success) {
+                        this.showError(result.error);
+                    }
+                } catch (error) {
+                    this.showError('Login failed: ' + error.message);
+                }
+            }
+
+            async handleAddUser() {
+                const email = document.getElementById('newUserEmail').value;
+                const password = document.getElementById('newUserPassword').value;
+                const role = document.getElementById('newUserRole').value;
+                
+                try {
+                    const result = await window.authManager.createUser(email, password, role);
+                    if (result.success) {
+                        // Clear form
+                        document.getElementById('addUserForm').reset();
+                        this.showNotification(`✅ User ${email} created successfully!`, 'success');
+                    } else {
+                        this.showNotification(`❌ Failed to create user: ${result.error}`, 'error');
+                    }
+                } catch (error) {
+                    this.showNotification(`❌ Failed to create user: ${error.message}`, 'error');
+                }
+            }
+
+            showError(message) {
+                const errorDiv = document.getElementById('errorMessage');
+                if (message) {
+                    errorDiv.textContent = message;
+                    errorDiv.classList.remove('hidden');
+                } else {
+                    errorDiv.classList.add('hidden');
+                }
+            }
+
+            showNotification(message, type) {
+                if (window.dashboardManager) {
+                    window.dashboardManager.showNotification(message, type);
+                }
+            }
+        }
+
+        // Global helper functions
+        function showHelp() {
+            alert('🆘 Help: Contact your system administrator for assistance.');
+        }
+
+        function showSettings() {
+            alert('⚙️ Settings: Advanced settings coming soon!');
+        }
+
+        // Initialize application
+        const app = new HomeAutomationApp();
+        
+        // Start initialization when page loads
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => app.initialize());
+        } else {
+            app.initialize();
+        }
+
+        // Auto-retry initialization if configuration becomes available
+        const configCheckInterval = setInterval(() => {
+            if (!app.initialized && window.appConfig.isConfigured()) {
+                clearInterval(configCheckInterval);
+                app.initialize();
+            }
+        }, 1000);
+
+        console.log('🔐 ESP32 Home Automation - Secure Dashboard Loaded');
+    </script>
+</body>
+</html>
