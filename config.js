@@ -1,140 +1,157 @@
-// config.js - Secure configuration without hardcoded secrets
+// Enhanced config.js - Fix for persistent configuration issues
 class Config {
     constructor() {
         this.environment = this.detectEnvironment();
+        this.storageKey = 'esp32_firebase_config_v3'; // Updated version
+        this.configValid = false;
         this.firebaseConfig = this.getFirebaseConfig();
     }
 
-    detectEnvironment() {
-        const hostname = window.location.hostname;
-        
-        if (hostname === 'localhost' || hostname === '127.0.0.1') {
-            return 'development';
-        } else if (hostname.includes('github.io')) {
-            return 'production';
-        } else {
-            return 'staging';
-        }
-    }
-
     getFirebaseConfig() {
-        // Configuration is loaded from URL parameters or environment
-        const urlParams = new URLSearchParams(window.location.search);
+        // Try multiple storage methods with validation
+        let config = this.loadFromStorage();
         
-        // Try to get config from URL parameters (for secure deployment)
-        const apiKey = urlParams.get('apiKey') || this.getFromStorage('firebase_api_key');
-        const authDomain = urlParams.get('authDomain') || this.getFromStorage('firebase_auth_domain');
-        const databaseURL = urlParams.get('databaseURL') || this.getFromStorage('firebase_database_url');
-        const projectId = urlParams.get('projectId') || this.getFromStorage('firebase_project_id');
-
-        if (!apiKey || !authDomain || !databaseURL || !projectId) {
-            // Show configuration modal if not configured
-            this.showConfigurationModal();
-            return null;
+        if (config && this.validateConfig(config)) {
+            this.configValid = true;
+            console.log('✅ Valid configuration loaded from storage');
+            return config;
         }
 
-        const config = {
-            apiKey: apiKey,
-            authDomain: authDomain,
-            databaseURL: databaseURL,
-            projectId: projectId,
-            storageBucket: `${projectId}.appspot.com`,
-            messagingSenderId: "123456789", // This can be public
-            appId: "1:123456789:web:abcdef123456" // This can be public
-        };
+        // If storage fails, try URL parameters
+        config = this.loadFromURLParams();
+        if (config && this.validateConfig(config)) {
+            this.storeConfig(config);
+            this.configValid = true;
+            console.log('✅ Valid configuration loaded from URL');
+            return config;
+        }
 
-        // Store securely for future use
-        this.storeConfig(config);
-        return config;
+        // Show configuration modal only if no valid config found
+        console.log('❌ No valid configuration found, showing modal');
+        this.showConfigurationModal();
+        return null;
     }
 
-    getFromStorage(key) {
-        try {
-            return localStorage.getItem(key);
-        } catch (e) {
-            return null;
+    validateConfig(config) {
+        if (!config) {
+            console.log('❌ Config validation failed: null config');
+            return false;
         }
+        
+        const required = ['apiKey', 'authDomain', 'databaseURL', 'projectId'];
+        const missing = required.filter(key => !config[key] || config[key].trim().length === 0);
+        
+        if (missing.length > 0) {
+            console.log('❌ Config validation failed: missing fields:', missing);
+            return false;
+        }
+
+        // Additional validation
+        if (!config.apiKey.startsWith('AIzaSy')) {
+            console.log('❌ Config validation failed: invalid API key format');
+            return false;
+        }
+
+        if (!config.authDomain.includes('.firebaseapp.com')) {
+            console.log('❌ Config validation failed: invalid auth domain format');
+            return false;
+        }
+
+        if (!config.databaseURL.includes('firebaseio.com')) {
+            console.log('❌ Config validation failed: invalid database URL format');
+            return false;
+        }
+
+        console.log('✅ Configuration validation passed');
+        return true;
+    }
+
+    loadFromStorage() {
+        try {
+            // Try new storage format first
+            const stored = localStorage.getItem(this.storageKey);
+            if (stored) {
+                const parsed = JSON.parse(stored);
+                if (this.validateConfig(parsed)) {
+                    return parsed;
+                }
+            }
+
+            // Try legacy formats
+            const legacyKeys = [
+                'esp32_firebase_config_v2',
+                'esp32_firebase_config_v1',
+                'firebase_config'
+            ];
+
+            for (const key of legacyKeys) {
+                const legacyStored = localStorage.getItem(key);
+                if (legacyStored) {
+                    const parsed = JSON.parse(legacyStored);
+                    if (this.validateConfig(parsed)) {
+                        // Migrate to new format
+                        this.storeConfig(parsed);
+                        return parsed;
+                    }
+                }
+            }
+
+            // Try individual localStorage items
+            const individualConfig = {
+                apiKey: localStorage.getItem('firebase_api_key') || localStorage.getItem('firebase_apikey'),
+                authDomain: localStorage.getItem('firebase_auth_domain') || localStorage.getItem('firebase_authdomain'),
+                databaseURL: localStorage.getItem('firebase_database_url') || localStorage.getItem('firebase_databaseurl'),
+                projectId: localStorage.getItem('firebase_project_id') || localStorage.getItem('firebase_projectid')
+            };
+
+            if (this.validateConfig(individualConfig)) {
+                const fullConfig = this.completeConfig(individualConfig);
+                this.storeConfig(fullConfig);
+                return fullConfig;
+            }
+
+        } catch (e) {
+            console.warn('❌ Storage access failed:', e);
+        }
+        
+        return null;
     }
 
     storeConfig(config) {
         try {
+            const configToStore = JSON.stringify(config);
+            
+            // Store in multiple places for maximum reliability
+            localStorage.setItem(this.storageKey, configToStore);
+            sessionStorage.setItem(this.storageKey, configToStore);
+            
+            // Also store individual items for compatibility
             Object.keys(config).forEach(key => {
                 localStorage.setItem(`firebase_${key.toLowerCase()}`, config[key]);
             });
+            
+            // Set a flag to indicate config is stored
+            localStorage.setItem('firebase_config_stored', 'true');
+            
+            console.log('✅ Configuration stored successfully');
+            this.configValid = true;
         } catch (e) {
-            console.warn('Could not store configuration');
+            console.error('❌ Failed to store configuration:', e);
         }
     }
 
-    showConfigurationModal() {
-        const modal = document.createElement('div');
-        modal.id = 'config-modal';
-        modal.innerHTML = `
-            <div class="config-modal-overlay">
-                <div class="config-modal-content">
-                    <h2>🔧 Firebase Configuration Required</h2>
-                    <p>Please enter your Firebase project configuration:</p>
-                    
-                    <form id="config-form">
-                        <div class="form-group">
-                            <label>Firebase API Key:</label>
-                            <input type="text" id="config-api-key" placeholder="AIzaSy..." required>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label>Auth Domain:</label>
-                            <input type="text" id="config-auth-domain" placeholder="your-project.firebaseapp.com" required>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label>Database URL:</label>
-                            <input type="url" id="config-database-url" placeholder="https://your-project-default-rtdb.firebaseio.com" required>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label>Project ID:</label>
-                            <input type="text" id="config-project-id" placeholder="your-project-id" required>
-                        </div>
-                        
-                        <button type="submit">💾 Save Configuration</button>
-                    </form>
-                    
-                    <div class="config-help">
-                        <p><strong>🔒 Security Note:</strong> These settings are stored locally and never transmitted to third parties.</p>
-                        <p><strong>📖 Help:</strong> Get these values from your Firebase Console → Project Settings → General → Your apps</p>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        document.body.appendChild(modal);
-
-        document.getElementById('config-form').addEventListener('submit', (e) => {
-            e.preventDefault();
-            
-            const config = {
-                apiKey: document.getElementById('config-api-key').value,
-                authDomain: document.getElementById('config-auth-domain').value,
-                databaseURL: document.getElementById('config-database-url').value,
-                projectId: document.getElementById('config-project-id').value,
-                storageBucket: document.getElementById('config-project-id').value + '.appspot.com',
-                messagingSenderId: "123456789",
-                appId: "1:123456789:web:abcdef123456"
-            };
-
-            this.storeConfig(config);
-            this.firebaseConfig = config;
-            document.body.removeChild(modal);
-            
-            // Reload to initialize Firebase
-            window.location.reload();
-        });
+    isConfigured() {
+        return this.configValid && this.firebaseConfig !== null;
     }
 
-    isConfigured() {
-        return this.firebaseConfig !== null;
+    // Add method to force re-validation
+    revalidateConfig() {
+        const config = this.loadFromStorage();
+        if (config && this.validateConfig(config)) {
+            this.firebaseConfig = config;
+            this.configValid = true;
+            return true;
+        }
+        return false;
     }
 }
-
-// Export configuration instance
-window.appConfig = new Config();
