@@ -1,34 +1,41 @@
-// Enhanced auth.js - Fix for authentication persistence
+// auth.js - Authentication Management
 class AuthManager {
     constructor(config) {
         this.config = config;
-        this.currentUser = null;
-        this.userRole = null;
-        this.isAdmin = false;
-        this.db = null;
         this.auth = null;
-        this.initialized = false;
+        this.database = null;
+        this.currentUser = null;
+        this.userRole = 'user';
+        this.isAdmin = false;
+        this.authStateCallbacks = [];
     }
 
     async initialize() {
-        if (!this.config.isConfigured()) {
-            throw new Error('Firebase configuration required');
+        if (!this.config) {
+            throw new Error('Configuration required for authentication');
         }
 
         try {
-            // Initialize Firebase with persistence
-            firebase.initializeApp(this.config.firebaseConfig);
+            // Initialize Firebase
+            firebase.initializeApp(this.config);
             this.auth = firebase.auth();
-            this.db = firebase.database();
+            this.database = firebase.database();
 
-            // Set authentication persistence BEFORE setting up listeners
+            // Set authentication persistence
             await this.auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
-            console.log('✅ Firebase auth persistence set to LOCAL');
 
-            // Set up auth state listener with enhanced handling
-            this.setupAuthStateListener();
-            
-            this.initialized = true;
+            // Set up auth state listener
+            this.auth.onAuthStateChanged(async (user) => {
+                if (user) {
+                    await this.handleUserSignIn(user);
+                } else {
+                    this.handleUserSignOut();
+                }
+                
+                // Call registered callbacks
+                this.authStateCallbacks.forEach(callback => callback(user));
+            });
+
             console.log('✅ Authentication system initialized');
         } catch (error) {
             console.error('❌ Failed to initialize authentication:', error);
@@ -36,42 +43,20 @@ class AuthManager {
         }
     }
 
-    setupAuthStateListener() {
-        this.auth.onAuthStateChanged(async (user) => {
-            console.log('🔄 Auth state changed:', user ? user.email : 'null');
-            
-            if (user) {
-                await this.handleUserSignIn(user);
-            } else {
-                this.handleUserSignOut();
-            }
-        });
-
-        // Also listen for ID token changes (more reliable)
-        this.auth.onIdTokenChanged(async (user) => {
-            console.log('🔄 ID token changed:', user ? user.email : 'null');
-            
-            if (user && this.currentUser) {
-                // Refresh user role if token changed
-                await this.loadUserRole(user.uid);
-            }
-        });
-    }
-
     async handleUserSignIn(user) {
         try {
             this.currentUser = user;
             
-            // Load user role with retry logic
-            await this.loadUserRole(user.uid);
+            // Check if user is admin
+            const adminRef = this.database.ref(`admins/${user.uid}`);
+            const adminSnapshot = await adminRef.once('value');
+            this.isAdmin = adminSnapshot.exists();
+            this.userRole = this.isAdmin ? 'admin' : 'user';
             
-            // Update UI after successful auth
             this.showDashboard();
-            
-            console.log(`✅ User authenticated: ${user.email} (${this.userRole})`);
+            console.log(`✅ User signed in: ${user.email} (${this.userRole})`);
         } catch (error) {
-            console.error('❌ Error handling sign in:', error);
-            // Don't sign out on role loading error, just default to user role
+            console.error('❌ Error during sign in:', error);
             this.userRole = 'user';
             this.isAdmin = false;
             this.showDashboard();
@@ -80,9 +65,102 @@ class AuthManager {
 
     handleUserSignOut() {
         this.currentUser = null;
-        this.userRole = null;
+        this.userRole = 'user';
         this.isAdmin = false;
         this.showLogin();
         console.log('✅ User signed out');
+    }
+
+    async signIn(email, password) {
+        try {
+            const userCredential = await this.auth.signInWithEmailAndPassword(email, password);
+            return { success: true, user: userCredential.user };
+        } catch (error) {
+            console.error('❌ Sign in failed:', error);
+            return { success: false, error: this.getErrorMessage(error) };
+        }
+    }
+
+    async signOut() {
+        try {
+            await this.auth.signOut();
+        } catch (error) {
+            console.error('❌ Sign out failed:', error);
+        }
+    }
+
+    async createUser(email, password, role = 'user') {
+        if (!this.isAdmin) {
+            throw new Error('Admin access required');
+        }
+
+        try {
+            const userCredential = await this.auth.createUserWithEmailAndPassword(email, password);
+            const user = userCredential.user;
+
+            // Add user to database
+            await this.database.ref(`users/${user.uid}`).set({
+                email: email,
+                role: role,
+                created: Date.now(),
+                createdBy: this.currentUser.uid
+            });
+
+            // If admin, add to admins node
+            if (role === 'admin') {
+                await this.database.ref(`admins/${user.uid}`).set({
+                    email: email,
+                    role: 'admin',
+                    created: Date.now()
+                });
+            }
+
+            return { success: true, user: user };
+        } catch (error) {
+            console.error('❌ User creation failed:', error);
+            return { success: false, error: this.getErrorMessage(error) };
+        }
+    }
+
+    onAuthStateChanged(callback) {
+        this.authStateCallbacks.push(callback);
+    }
+
+    showLogin() {
+        document.getElementById('loginContainer').classList.remove('hidden');
+        document.getElementById('dashboardContainer').classList.add('hidden');
+        document.getElementById('loadingContainer').classList.add('hidden');
+    }
+
+    showDashboard() {
+        document.getElementById('loginContainer').classList.add('hidden');
+        document.getElementById('dashboardContainer').classList.remove('hidden');
+        document.getElementById('loadingContainer').classList.add('hidden');
+        
+        // Update user info
+        document.getElementById('userEmail').textContent = this.currentUser.email;
+        document.getElementById('userRole').textContent = this.isAdmin ? 'ADMIN' : 'USER';
+        
+        // Show admin panel if user is admin
+        if (this.isAdmin) {
+            document.getElementById('adminPanel').classList.remove('hidden');
+            document.getElementById('dashboardTitle').textContent = '👑 Admin Dashboard';
+        } else {
+            document.getElementById('adminPanel').classList.add('hidden');
+            document.getElementById('dashboardTitle').textContent = '🏠 My Smart Home';
+        }
+    }
+
+    getErrorMessage(error) {
+        const errorMap = {
+            'auth/user-not-found': 'User not found. Please check your email.',
+            'auth/wrong-password': 'Incorrect password. Please try again.',
+            'auth/invalid-email': 'Invalid email address format.',
+            'auth/email-already-in-use': 'Email address is already registered.',
+            'auth/weak-password': 'Password must be at least 6 characters.',
+            'auth/too-many-requests': 'Too many failed attempts. Please try again later.'
+        };
+        
+        return errorMap[error.code] || error.message;
     }
 }
